@@ -18,6 +18,9 @@ from .service import ConflictError, MemoryService
 
 
 def seed_demo(service: MemoryService, workspace_id: str = "horo-demo") -> dict[str, str]:
+    run_ids = [f"{workspace_id}-run-{index:03d}" for index in range(1, 4)]
+    event_ids = [f"{workspace_id}-evt-{index:03d}" for index in range(1, 7)]
+    improvement_id = f"{workspace_id}-imp-001"
     try:
         service.create_workspace(WorkspaceCreate(id=workspace_id, name="HORO Demo Comercial"))
     except ConflictError:
@@ -74,9 +77,9 @@ def seed_demo(service: MemoryService, workspace_id: str = "horo-demo") -> dict[s
     )
 
     runs = [
-        ("demo-run-001", "Validar mensaje centrado en automatización", "1.1.0"),
-        ("demo-run-002", "Validar mensaje centrado en seguimiento", "1.2.0"),
-        ("demo-run-003", "Comparar respuesta de empresas mineras", "1.2.0"),
+        (run_ids[0], "Validar mensaje centrado en automatización", "1.1.0"),
+        (run_ids[1], "Validar mensaje centrado en seguimiento", "1.2.0"),
+        (run_ids[2], "Comparar respuesta de empresas mineras", "1.2.0"),
     ]
     for run_id, objective, skill_version in runs:
         try:
@@ -96,9 +99,9 @@ def seed_demo(service: MemoryService, workspace_id: str = "horo-demo") -> dict[s
 
     events = [
         EventCreate(
-            id="demo-evt-001",
+            id=event_ids[0],
             workspace_id=workspace_id,
-            run_id="demo-run-001",
+            run_id=run_ids[0],
             actor_type="agent",
             actor_id="hermes-sales",
             event_type="message_drafted",
@@ -109,9 +112,9 @@ def seed_demo(service: MemoryService, workspace_id: str = "horo-demo") -> dict[s
             metrics={"human_edits": 4, "duration_seconds": 96},
         ),
         EventCreate(
-            id="demo-evt-002",
+            id=event_ids[1],
             workspace_id=workspace_id,
-            run_id="demo-run-001",
+            run_id=run_ids[0],
             actor_type="human",
             actor_id="operator",
             event_type="message_rejected",
@@ -121,9 +124,9 @@ def seed_demo(service: MemoryService, workspace_id: str = "horo-demo") -> dict[s
             evidence={"reason": "No menciona una fricción operacional verificable"},
         ),
         EventCreate(
-            id="demo-evt-003",
+            id=event_ids[2],
             workspace_id=workspace_id,
-            run_id="demo-run-002",
+            run_id=run_ids[1],
             actor_type="agent",
             actor_id="hermes-sales",
             event_type="message_sent",
@@ -134,9 +137,9 @@ def seed_demo(service: MemoryService, workspace_id: str = "horo-demo") -> dict[s
             metrics={"human_edits": 1, "duration_seconds": 48},
         ),
         EventCreate(
-            id="demo-evt-004",
+            id=event_ids[3],
             workspace_id=workspace_id,
-            run_id="demo-run-002",
+            run_id=run_ids[1],
             actor_type="system",
             actor_id="linkedin-monitor",
             event_type="positive_reply",
@@ -147,9 +150,9 @@ def seed_demo(service: MemoryService, workspace_id: str = "horo-demo") -> dict[s
             metrics={"reply": 1, "hours_to_reply": 4.2},
         ),
         EventCreate(
-            id="demo-evt-005",
+            id=event_ids[4],
             workspace_id=workspace_id,
-            run_id="demo-run-003",
+            run_id=run_ids[2],
             actor_type="agent",
             actor_id="hermes-sales",
             event_type="pattern_observed",
@@ -164,13 +167,13 @@ def seed_demo(service: MemoryService, workspace_id: str = "horo-demo") -> dict[s
                 id="pattern-followup",
                 label="Seguimiento supera automatización",
             ),
-            evidence={"event_ids": ["demo-evt-002", "demo-evt-004"]},
+            evidence={"event_ids": [event_ids[1], event_ids[3]]},
             metrics={"sample_size": 2, "confidence": 0.58},
         ),
         EventCreate(
-            id="demo-evt-006",
+            id=event_ids[5],
             workspace_id=workspace_id,
-            run_id="demo-run-003",
+            run_id=run_ids[2],
             actor_type="agent",
             actor_id="hermes-sales",
             event_type="message_drafted",
@@ -197,7 +200,7 @@ def seed_demo(service: MemoryService, workspace_id: str = "horo-demo") -> dict[s
     try:
         service.create_improvement(
             ImprovementCreate(
-                id="demo-imp-001",
+                id=improvement_id,
                 workspace_id=workspace_id,
                 title="Priorizar fricción de seguimiento",
                 description=(
@@ -207,7 +210,7 @@ def seed_demo(service: MemoryService, workspace_id: str = "horo-demo") -> dict[s
                 ),
                 target_type="skill",
                 target_id="linkedin-prospecting",
-                based_on_event_ids=["demo-evt-002", "demo-evt-004", "demo-evt-005"],
+                based_on_event_ids=[event_ids[1], event_ids[3], event_ids[4]],
                 proposed_patch={
                     "from": "hablar de automatización general",
                     "to": "abrir con una fricción de seguimiento verificable",

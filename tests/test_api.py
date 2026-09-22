@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from horo_memory.demo import seed_demo
+
 
 def test_health_is_public_and_security_headers_exist(client: TestClient) -> None:
     response = client.get("/health")
@@ -277,3 +279,12 @@ def test_version_evaluation_promotion_and_rollback(
     assert rolled_back.status_code == 201
     assert rolled_back.json()["action"] == "rollback"
     assert rolled_back.json()["to_version"] == "1.0.0"
+
+
+def test_demo_identifiers_are_isolated_per_workspace(client: TestClient) -> None:
+    service = client.app.state.service
+    seed_demo(service, "demo-one")
+    seed_demo(service, "demo-two")
+    assert service.stats("demo-one")["runs"] == 3
+    assert service.stats("demo-two")["runs"] == 3
+    assert service.list_evaluations("demo-two")[0]["verdict"] == "candidate_better"
