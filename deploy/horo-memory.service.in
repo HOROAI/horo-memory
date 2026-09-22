@@ -1,0 +1,24 @@
+[Unit]
+Description=HORO Memory self-hosted service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__HORO_USER__
+Group=__HORO_GROUP__
+WorkingDirectory=__HORO_ROOT__
+EnvironmentFile=/etc/horo-memory.env
+ExecStart=__HORO_ROOT__/.venv/bin/horo-memory serve
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/horo-memory
+LockPersonality=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

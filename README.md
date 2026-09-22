@@ -41,6 +41,23 @@ Open `http://127.0.0.1:8088`, enter the API token, and choose the `HORO Demo` wo
 
 The default port binding is local-only. On a VPS, reach it through Tailscale or place a TLS reverse proxy in front of it. Do not publish the raw HTTP port to the internet.
 
+### VPS without Docker
+
+The repository includes a hardened systemd installer for a private Linux VPS:
+
+```bash
+git clone https://github.com/HOROAI/horo-memory.git
+cd horo-memory
+chmod +x deploy/install-vps.sh
+./deploy/install-vps.sh
+```
+
+It generates the token in `/etc/horo-memory.env`, stores data in `/var/lib/horo-memory`, runs under the current non-root user, and binds only to `127.0.0.1:8088`. Connect from another computer with an SSH tunnel:
+
+```bash
+ssh -L 8088:127.0.0.1:8088 user@your-vps
+```
+
 ## Local development
 
 ```bash
