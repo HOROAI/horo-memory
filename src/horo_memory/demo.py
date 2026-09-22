@@ -1,0 +1,182 @@
+from __future__ import annotations
+
+import sqlite3
+
+from .models import (
+    AgentCreate,
+    EntityRef,
+    EventCreate,
+    ImprovementCreate,
+    NoteCreate,
+    RunComplete,
+    RunCreate,
+    WorkspaceCreate,
+)
+from .service import ConflictError, MemoryService
+
+
+def seed_demo(service: MemoryService, workspace_id: str = "horo-demo") -> dict[str, str]:
+    try:
+        service.create_workspace(WorkspaceCreate(id=workspace_id, name="HORO Demo Comercial"))
+    except ConflictError:
+        pass
+
+    try:
+        service.create_agent(
+            AgentCreate(
+                id="hermes-sales",
+                workspace_id=workspace_id,
+                name="Hermes Ventas",
+                runtime="hermes",
+                metadata={"role": "prospecting-agent"},
+            )
+        )
+    except ConflictError:
+        pass
+
+    service.write_note(
+        NoteCreate(
+            workspace_id=workspace_id,
+            category="skills",
+            slug="linkedin-prospecting",
+            title="LinkedIn Prospecting",
+            body=(
+                "## Purpose\n\nCreate relevant conversations with observable evidence.\n\n"
+                "## Current version\n\n`1.2.0`\n\n"
+                "## Rule\n\nLead with a concrete operational problem and one short question."
+            ),
+            frontmatter={"version": "1.2.0", "status": "production"},
+        )
+    )
+
+    runs = [
+        ("demo-run-001", "Validar mensaje centrado en automatización"),
+        ("demo-run-002", "Validar mensaje centrado en seguimiento"),
+        ("demo-run-003", "Comparar respuesta de empresas mineras"),
+    ]
+    for run_id, objective in runs:
+        try:
+            service.start_run(
+                RunCreate(
+                    id=run_id,
+                    workspace_id=workspace_id,
+                    agent_id="hermes-sales",
+                    objective=objective,
+                    workflow_version="commercial-loop-v1",
+                    skill_versions={"linkedin-prospecting": "1.2.0"},
+                )
+            )
+        except ConflictError:
+            pass
+
+    events = [
+        EventCreate(
+            id="demo-evt-001",
+            workspace_id=workspace_id,
+            run_id="demo-run-001",
+            actor_type="agent",
+            actor_id="hermes-sales",
+            event_type="message_drafted",
+            occurred_at="2026-09-18T14:12:00Z",
+            subject=EntityRef(type="prospect", id="andes-supply", label="Andes Supply"),
+            object=EntityRef(type="campaign", id="mining-cl-v1", label="Minería Chile v1"),
+            evidence={"artifact": "campaigns/mining-cl-v1.md"},
+            metrics={"human_edits": 4, "duration_seconds": 96},
+        ),
+        EventCreate(
+            id="demo-evt-002",
+            workspace_id=workspace_id,
+            run_id="demo-run-001",
+            actor_type="human",
+            actor_id="operator",
+            event_type="message_rejected",
+            occurred_at="2026-09-18T14:18:00Z",
+            subject=EntityRef(type="campaign", id="mining-cl-v1", label="Minería Chile v1"),
+            object=EntityRef(type="outcome", id="review-001", label="Demasiado genérico"),
+            evidence={"reason": "No menciona una fricción operacional verificable"},
+        ),
+        EventCreate(
+            id="demo-evt-003",
+            workspace_id=workspace_id,
+            run_id="demo-run-002",
+            actor_type="agent",
+            actor_id="hermes-sales",
+            event_type="message_sent",
+            occurred_at="2026-09-19T14:20:00Z",
+            subject=EntityRef(type="prospect", id="norte-industrial", label="Norte Industrial"),
+            object=EntityRef(type="campaign", id="followup-angle", label="Ángulo seguimiento"),
+            evidence={"channel": "linkedin", "receipt": "simulated-demo-002"},
+            metrics={"human_edits": 1, "duration_seconds": 48},
+        ),
+        EventCreate(
+            id="demo-evt-004",
+            workspace_id=workspace_id,
+            run_id="demo-run-002",
+            actor_type="system",
+            actor_id="linkedin-monitor",
+            event_type="positive_reply",
+            occurred_at="2026-09-19T18:34:00Z",
+            subject=EntityRef(type="prospect", id="norte-industrial", label="Norte Industrial"),
+            object=EntityRef(type="outcome", id="reply-002", label="Solicita información"),
+            evidence={"message_id": "simulated-reply-002", "classification": "interest"},
+            metrics={"reply": 1, "hours_to_reply": 4.2},
+        ),
+        EventCreate(
+            id="demo-evt-005",
+            workspace_id=workspace_id,
+            run_id="demo-run-003",
+            actor_type="agent",
+            actor_id="hermes-sales",
+            event_type="pattern_observed",
+            occurred_at="2026-09-20T16:02:00Z",
+            subject=EntityRef(
+                type="skill",
+                id="linkedin-prospecting",
+                label="LinkedIn Prospecting",
+            ),
+            object=EntityRef(
+                type="outcome",
+                id="pattern-followup",
+                label="Seguimiento supera automatización",
+            ),
+            evidence={"event_ids": ["demo-evt-002", "demo-evt-004"]},
+            metrics={"sample_size": 2, "confidence": 0.58},
+        ),
+    ]
+    for event in events:
+        service.record_event(event)
+
+    for run_id, _ in runs:
+        try:
+            service.complete_run(
+                workspace_id,
+                run_id,
+                RunComplete(status="completed", summary="Ejecución demostrativa registrada"),
+            )
+        except ConflictError:
+            pass
+
+    try:
+        service.create_improvement(
+            ImprovementCreate(
+                id="demo-imp-001",
+                workspace_id=workspace_id,
+                title="Priorizar fricción de seguimiento",
+                description=(
+                    "La variante específica necesitó menos correcciones y produjo una "
+                    "respuesta positiva. "
+                    "Requiere más observaciones antes de promoverse."
+                ),
+                target_type="skill",
+                target_id="linkedin-prospecting",
+                based_on_event_ids=["demo-evt-002", "demo-evt-004", "demo-evt-005"],
+                proposed_patch={
+                    "from": "hablar de automatización general",
+                    "to": "abrir con una fricción de seguimiento verificable",
+                },
+                confidence=0.58,
+            )
+        )
+    except (sqlite3.IntegrityError, ConflictError):
+        pass
+    return {"workspace_id": workspace_id, "status": "ready"}

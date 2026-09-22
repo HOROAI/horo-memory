@@ -1,0 +1,23 @@
+services:
+  horo-memory:
+    build: .
+    restart: unless-stopped
+    environment:
+      HORO_API_TOKEN: ${HORO_API_TOKEN:?Set HORO_API_TOKEN in .env}
+      HORO_DATA_DIR: /data
+      HORO_HOST: 0.0.0.0
+      HORO_PORT: 8088
+      HORO_ALLOWED_ORIGINS: ${HORO_ALLOWED_ORIGINS:-}
+      HORO_TRUST_PROXY: ${HORO_TRUST_PROXY:-false}
+      HORO_GRAPHIFY_ENABLED: ${HORO_GRAPHIFY_ENABLED:-true}
+      HORO_GRAPHIFY_COMMAND: graphify
+    volumes:
+      - ./data:/data
+    ports:
+      # Localhost by default. Expose through Tailscale or a TLS reverse proxy.
+      - "127.0.0.1:${HORO_HTTP_PORT:-8088}:8088"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+

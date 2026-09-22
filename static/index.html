@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>HORO Brain</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div>
+            <strong>HORO</strong>
+            <small>Managed Memory</small>
+          </div>
+        </div>
+
+        <label class="field-label" for="workspace-select">Espacio</label>
+        <select id="workspace-select" class="select"></select>
+
+        <nav class="nav" aria-label="Vistas del cerebro">
+          <button class="nav-item active" data-view="all">
+            <span class="nav-icon">◉</span><span>Cerebro</span>
+          </button>
+          <button class="nav-item" data-view="execution">
+            <span class="nav-icon">↯</span><span>Ejecuciones</span>
+          </button>
+          <button class="nav-item" data-view="knowledge">
+            <span class="nav-icon">◇</span><span>Conocimiento</span>
+          </button>
+          <button class="nav-item" data-view="evolution">
+            <span class="nav-icon">↗</span><span>Evolución</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-spacer"></div>
+        <div class="integration-card">
+          <div class="integration-title">
+            <span class="status-dot" id="graphify-dot"></span>
+            <strong>Graphify</strong>
+          </div>
+          <p id="graphify-status">Comprobando integración…</p>
+          <button id="reindex-button" class="text-button">Actualizar índice</button>
+        </div>
+        <button id="change-token" class="account-button">Cambiar acceso</button>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Memoria operacional</p>
+            <h1 id="view-title">Mapa del cerebro</h1>
+          </div>
+          <div class="top-actions">
+            <div class="live-indicator"><span></span> EN VIVO</div>
+            <button id="fit-button" class="icon-button" title="Centrar grafo">⌖</button>
+            <button id="refresh-button" class="primary-button">Actualizar</button>
+          </div>
+        </header>
+
+        <section class="stats" aria-label="Resumen">
+          <article><span>Agentes</span><strong id="stat-agents">0</strong></article>
+          <article><span>Ejecuciones</span><strong id="stat-runs">0</strong></article>
+          <article><span>Eventos</span><strong id="stat-events">0</strong></article>
+          <article class="attention"><span>Mejoras pendientes</span><strong id="stat-proposals">0</strong></article>
+        </section>
+
+        <section class="brain-layout">
+          <div class="graph-panel">
+            <div class="graph-toolbar">
+              <div id="legend" class="legend"></div>
+              <div class="zoom-hint">Rueda para acercar · arrastra para explorar</div>
+            </div>
+            <canvas id="brain-canvas" aria-label="Grafo interactivo de memoria HORO"></canvas>
+            <div id="empty-state" class="empty-state hidden">
+              <div class="empty-orbit"><span></span></div>
+              <h2>Este cerebro aún no tiene recuerdos</h2>
+              <p>Conecta un agente por MCP o registra la primera ejecución mediante la API.</p>
+              <a href="/docs" target="_blank" rel="noreferrer">Abrir documentación de API</a>
+            </div>
+          </div>
+
+          <aside class="inspector" id="inspector">
+            <div class="inspector-placeholder" id="inspector-placeholder">
+              <div class="scan-mark"></div>
+              <p>Selecciona un nodo para revisar su evidencia, relaciones y evolución.</p>
+            </div>
+            <div id="inspector-content" class="hidden">
+              <div class="node-kind" id="node-kind"></div>
+              <h2 id="node-title"></h2>
+              <p id="node-subtitle" class="node-subtitle"></p>
+              <div class="inspector-section">
+                <h3>Relaciones</h3>
+                <div id="node-relations" class="relations"></div>
+              </div>
+              <div class="inspector-section">
+                <h3>Evidencia</h3>
+                <pre id="node-data"></pre>
+              </div>
+            </div>
+          </aside>
+        </section>
+
+        <section class="lower-grid">
+          <article class="timeline-panel">
+            <div class="section-header">
+              <div><p class="eyebrow">Actividad</p><h2>Registro reciente</h2></div>
+              <span id="event-count" class="pill">0 eventos</span>
+            </div>
+            <div id="timeline" class="timeline"></div>
+          </article>
+          <article class="proposal-panel">
+            <div class="section-header">
+              <div><p class="eyebrow">Aprendizaje controlado</p><h2>Mejoras propuestas</h2></div>
+            </div>
+            <div id="proposals" class="proposals"></div>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="auth-dialog" class="auth-dialog">
+      <form id="auth-form" method="dialog">
+        <div class="auth-mark"><span></span><span></span><span></span></div>
+        <p class="eyebrow">HORO Managed Memory</p>
+        <h2>Abre el cerebro de tu operación</h2>
+        <p>Introduce el token configurado en tu servidor. Se conservará solamente en esta pestaña.</p>
+        <label for="token-input">Token de acceso</label>
+        <input id="token-input" type="password" autocomplete="current-password" required />
+        <p id="auth-error" class="error hidden"></p>
+        <button class="primary-button" type="submit">Conectar</button>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast hidden" role="status"></div>
+    <script src="/assets/app.js?v=0.1.1" defer></script>
+  </body>
+</html>
