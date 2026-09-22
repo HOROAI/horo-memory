@@ -22,7 +22,9 @@ def seed_demo(service: MemoryService, workspace_id: str = "horo-demo") -> dict[s
     event_ids = [f"{workspace_id}-evt-{index:03d}" for index in range(1, 7)]
     improvement_id = f"{workspace_id}-imp-001"
     try:
-        service.create_workspace(WorkspaceCreate(id=workspace_id, name="HORO Demo Comercial"))
+        service.create_workspace(
+            WorkspaceCreate(id=workspace_id, name=f"HORO Learning · {workspace_id}")
+        )
     except ConflictError:
         pass
 

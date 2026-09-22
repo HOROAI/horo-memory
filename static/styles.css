@@ -168,6 +168,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; color: #b8d3c8; font: 10px
 .auth-dialog .primary-button { width: 100%; margin-top: 12px; }
 .error { color: var(--danger) !important; }
 .toast { position: fixed; right: 22px; bottom: 22px; z-index: 20; max-width: 360px; background: #13241f; border: 1px solid var(--line-strong); border-radius: 10px; padding: 12px 15px; color: var(--text); font-size: 11px; box-shadow: var(--shadow); }
+.top-select { display: none; width: min(180px, 32vw); margin: 0; }
 
 @media (max-width: 1050px) {
   .shell { grid-template-columns: 78px minmax(0, 1fr); }
@@ -176,6 +177,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; color: #b8d3c8; font: 10px
   .brand { justify-content: center; }
   .nav-item { justify-content: center; }
   .brain-layout { grid-template-columns: minmax(0, 1fr) 270px; }
+  .top-select { display: block; }
 }
 @media (max-width: 760px) {
   .shell { display: block; }

@@ -20,6 +20,7 @@ const colors = {
 const $ = (selector) => document.querySelector(selector);
 const authDialog = $("#auth-dialog");
 const workspaceSelect = $("#workspace-select");
+const mobileWorkspaceSelect = $("#workspace-select-mobile");
 const canvas = $("#brain-canvas");
 const ctx = canvas.getContext("2d");
 let animationFrame = null;
@@ -63,6 +64,7 @@ async function initialize() {
 async function loadWorkspaces() {
   const workspaces = await api("/api/v1/workspaces");
   workspaceSelect.innerHTML = "";
+  mobileWorkspaceSelect.innerHTML = "";
   if (!workspaces.length) {
     const id = "horo-lab";
     await api("/api/v1/workspaces", {
@@ -75,10 +77,12 @@ async function loadWorkspaces() {
     option.value = workspace.id;
     option.textContent = workspace.name;
     workspaceSelect.append(option);
+    mobileWorkspaceSelect.append(option.cloneNode(true));
   }
   const previous = localStorage.getItem("horo_workspace");
   state.workspace = workspaces.some((item) => item.id === previous) ? previous : workspaces[0].id;
   workspaceSelect.value = state.workspace;
+  mobileWorkspaceSelect.value = state.workspace;
   await refresh();
 }
 
@@ -411,6 +415,7 @@ $("#auth-form").addEventListener("submit", async (event) => {
 });
 $("#change-token").addEventListener("click", () => { $("#token-input").value = ""; authDialog.showModal(); });
 workspaceSelect.addEventListener("change", async () => { state.workspace = workspaceSelect.value; localStorage.setItem("horo_workspace", state.workspace); await refresh(); });
+mobileWorkspaceSelect.addEventListener("change", async () => { state.workspace = mobileWorkspaceSelect.value; workspaceSelect.value = state.workspace; localStorage.setItem("horo_workspace", state.workspace); await refresh(); });
 $("#refresh-button").addEventListener("click", async () => { try { await refresh(); showToast("Memoria actualizada"); } catch (error) { showToast(error.message, true); } });
 $("#fit-button").addEventListener("click", () => { pan = { x: 0, y: 0 }; zoom = 1; buildLayout(); });
 $("#reindex-button").addEventListener("click", async () => {
