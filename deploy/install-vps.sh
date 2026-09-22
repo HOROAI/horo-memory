@@ -24,10 +24,17 @@ HORO_DATA_DIR=$DATA_DIR
 HORO_HOST=127.0.0.1
 HORO_PORT=8088
 HORO_GRAPHIFY_ENABLED=true
-HORO_GRAPHIFY_COMMAND=graphify
+HORO_GRAPHIFY_COMMAND=$ROOT_DIR/.venv/bin/graphify
 EOF
   sudo install -o root -g "$SERVICE_GROUP" -m 0640 "$temporary" "$ENV_FILE"
   rm -f "$temporary"
+fi
+
+graphify_command="$ROOT_DIR/.venv/bin/graphify"
+if sudo grep -q '^HORO_GRAPHIFY_COMMAND=' "$ENV_FILE"; then
+  sudo sed -i "s|^HORO_GRAPHIFY_COMMAND=.*|HORO_GRAPHIFY_COMMAND=$graphify_command|" "$ENV_FILE"
+else
+  echo "HORO_GRAPHIFY_COMMAND=$graphify_command" | sudo tee -a "$ENV_FILE" >/dev/null
 fi
 
 temporary_unit="$(mktemp)"
