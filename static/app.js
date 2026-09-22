@@ -32,6 +32,7 @@ let dragNode = null;
 let pan = { x: 0, y: 0 };
 let zoom = 1;
 let pointer = { x: 0, y: 0, down: false, lastX: 0, lastY: 0 };
+let refreshTimer = null;
 
 async function api(path, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
@@ -56,6 +57,7 @@ async function initialize() {
   try {
     await loadWorkspaces();
     await loadIntegration();
+    startAutoRefresh();
   } catch (error) {
     showToast(error.message, true);
   }
@@ -79,8 +81,19 @@ async function loadWorkspaces() {
     workspaceSelect.append(option);
     mobileWorkspaceSelect.append(option.cloneNode(true));
   }
+  const requested = new URLSearchParams(window.location.search).get("workspace");
   const previous = localStorage.getItem("horo_workspace");
-  state.workspace = workspaces.some((item) => item.id === previous) ? previous : workspaces[0].id;
+  const preferenceVersion = localStorage.getItem("horo_workspace_preference_version");
+  const preferred = workspaces.find((item) => item.id === "horo-production")?.id || workspaces[0].id;
+  if (workspaces.some((item) => item.id === requested)) {
+    state.workspace = requested;
+  } else if (preferenceVersion === "2" && workspaces.some((item) => item.id === previous)) {
+    state.workspace = previous;
+  } else {
+    state.workspace = preferred;
+  }
+  localStorage.setItem("horo_workspace", state.workspace);
+  localStorage.setItem("horo_workspace_preference_version", "2");
   workspaceSelect.value = state.workspace;
   mobileWorkspaceSelect.value = state.workspace;
   await refresh();
@@ -110,6 +123,15 @@ async function refresh() {
   renderProposals();
   renderEvaluations();
   buildLayout();
+}
+
+function startAutoRefresh() {
+  clearInterval(refreshTimer);
+  refreshTimer = setInterval(() => {
+    if (document.visibilityState === "visible" && state.workspace && state.token) {
+      refresh().catch((error) => showToast(error.message, true));
+    }
+  }, 30000);
 }
 
 async function loadIntegration() {
@@ -432,6 +454,11 @@ document.querySelectorAll(".nav-item").forEach((button) => button.addEventListen
   $("#view-title").textContent = titles[state.view]; selectedNode = null; buildLayout();
 }));
 window.addEventListener("resize", draw);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && state.workspace && state.token) {
+    refresh().catch((error) => showToast(error.message, true));
+  }
+});
 
 function formatDate(value, compact = false) {
   if (!value) return "sin fecha";
