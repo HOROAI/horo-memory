@@ -4,13 +4,16 @@ const state = {
   graph: { nodes: [], edges: [] },
   events: [],
   proposals: [],
+  evaluations: [],
+  releases: [],
   view: "all",
 };
 
 const colors = {
   workspace: "#d7ff77", agent: "#69f0b7", human: "#ffcf88", system: "#9fb6ad",
   tool: "#ff9f72", run: "#72d7ff", event: "#79a89a", improvement: "#ba9cff",
-  skill: "#ffba72", workflow: "#ffdf72", knowledge: "#b7c7ff", prospect: "#ff8fa3",
+  skill: "#ffba72", workflow: "#ffdf72", version: "#f7c76b", evaluation: "#d7ff77",
+  release: "#57e3ae", knowledge: "#b7c7ff", prospect: "#ff8fa3",
   campaign: "#74e6d0", outcome: "#eaff9c", default: "#9bb3aa",
 };
 
@@ -82,21 +85,26 @@ async function loadWorkspaces() {
 async function refresh() {
   if (!state.workspace) return;
   const query = encodeURIComponent(state.workspace);
-  const [stats, graph, events, proposals] = await Promise.all([
+  const [stats, graph, events, proposals, evaluations, releases] = await Promise.all([
     api(`/api/v1/stats?workspace_id=${query}`),
     api(`/api/v1/graph?workspace_id=${query}`),
     api(`/api/v1/events?workspace_id=${query}&limit=100`),
     api(`/api/v1/improvements?workspace_id=${query}`),
+    api(`/api/v1/evaluations?workspace_id=${query}`),
+    api(`/api/v1/releases?workspace_id=${query}`),
   ]);
   state.graph = graph;
   state.events = events;
   state.proposals = proposals;
+  state.evaluations = evaluations;
+  state.releases = releases;
   $("#stat-agents").textContent = stats.agents;
   $("#stat-runs").textContent = stats.runs;
   $("#stat-events").textContent = stats.events;
   $("#stat-proposals").textContent = stats.pending_proposals;
   renderTimeline();
   renderProposals();
+  renderEvaluations();
   buildLayout();
 }
 
@@ -116,7 +124,7 @@ async function loadIntegration() {
 function visibleKinds() {
   if (state.view === "execution") return new Set(["workspace", "agent", "human", "system", "tool", "run", "event", "prospect", "campaign", "outcome"]);
   if (state.view === "knowledge") return new Set(["workspace", "knowledge", "skill", "workflow", "campaign", "prospect"]);
-  if (state.view === "evolution") return new Set(["workspace", "event", "improvement", "skill", "workflow", "outcome"]);
+  if (state.view === "evolution") return new Set(["workspace", "event", "improvement", "skill", "workflow", "version", "evaluation", "release", "outcome"]);
   return null;
 }
 
@@ -324,6 +332,55 @@ function renderProposals() {
       ${proposal.status === "proposed" ? `<div class="proposal-actions"><button data-decision="approved" data-id="${proposal.id}">Aprobar</button><button data-decision="rejected" data-id="${proposal.id}">Rechazar</button></div>` : ""}
     </article>`).join("") || '<p class="node-subtitle">Aún no existen propuestas de mejora.</p>';
   document.querySelectorAll("[data-decision]").forEach((button) => button.addEventListener("click", decideProposal));
+}
+
+function renderEvaluations() {
+  $("#evaluation-count").textContent = `${state.evaluations.length} comparaciones`;
+  $("#evaluations").innerHTML = state.evaluations.map((item) => {
+    const baseline = item.baseline_result;
+    const candidate = item.candidate_result;
+    const pct = item.improvement_percent == null ? "sin evidencia suficiente" : `${item.improvement_percent >= 0 ? "+" : ""}${item.improvement_percent.toFixed(1)}% según ${item.metric}`;
+    const labels = { candidate_better: "candidata mejor", baseline_better: "base mejor", inconclusive: "inconcluso" };
+    const proposal = state.proposals.find((candidate) => candidate.status === "approved" && candidate.target_type === item.asset_type && candidate.target_id === item.asset_id);
+    const promotion = state.releases.find((release) => release.action === "promote" && release.evaluation_id === item.id);
+    const rollback = promotion && state.releases.find((release) => release.action === "rollback" && release.evaluation_id === item.id && release.created_at > promotion.created_at);
+    let action = "";
+    if (item.verdict === "candidate_better" && proposal && !promotion) action = `<button class="decision-button" data-promote="${item.id}" data-proposal="${proposal.id}" data-type="${item.asset_type}" data-asset="${item.asset_id}" data-version="${item.candidate_version}">Promover candidata</button>`;
+    else if (promotion && !rollback) action = `<button class="decision-button rollback" data-rollback="${promotion.id}" data-type="${item.asset_type}" data-asset="${item.asset_id}">Revertir versión</button>`;
+    else if (rollback) action = '<span class="release-state">Reversión registrada</span>';
+    else if (item.verdict === "candidate_better") action = '<span class="release-state">Pendiente de aprobación humana</span>';
+    return `<article class="evaluation">
+      <header><div><p class="eyebrow">${escapeHtml(item.asset_type)} · ${escapeHtml(item.asset_id)}</p><h3>${escapeHtml(item.baseline_version)} → ${escapeHtml(item.candidate_version)}</h3></div><span class="verdict ${item.verdict}">${labels[item.verdict]}</span></header>
+      <div class="comparison"><div><span>Base · n=${baseline.sample_size}</span><strong>${formatMetric(baseline.mean)}</strong></div><i>VS</i><div><span>Candidata · n=${candidate.sample_size}</span><strong>${formatMetric(candidate.mean)}</strong></div></div>
+      <footer>${escapeHtml(pct)} · objetivo: ${item.direction === "minimize" ? "reducir" : "aumentar"}</footer>${action}
+    </article>`;
+  }).join("") || '<p class="node-subtitle">Aún no hay versiones comparadas. Las comparaciones usan métricas reales de ejecuciones.</p>';
+  document.querySelectorAll("[data-promote]").forEach((button) => button.addEventListener("click", promoteVersion));
+  document.querySelectorAll("[data-rollback]").forEach((button) => button.addEventListener("click", rollbackVersion));
+}
+
+function formatMetric(value) { return value == null ? "—" : Number(value).toLocaleString("es-CL", { maximumFractionDigits: 2 }); }
+
+async function promoteVersion(event) {
+  const button = event.currentTarget;
+  if (!window.confirm(`¿Promover ${button.dataset.asset} ${button.dataset.version} a producción?`)) return;
+  try {
+    await api(`/api/v1/workspaces/${encodeURIComponent(state.workspace)}/assets/${encodeURIComponent(button.dataset.type)}/${encodeURIComponent(button.dataset.asset)}/versions/${encodeURIComponent(button.dataset.version)}/promote`, {
+      method: "POST", body: JSON.stringify({ evaluation_id: button.dataset.promote, proposal_id: button.dataset.proposal, promoted_by: "dashboard-operator" }),
+    });
+    showToast("Nueva versión promovida con evidencia"); await refresh();
+  } catch (error) { showToast(error.message, true); }
+}
+
+async function rollbackVersion(event) {
+  const button = event.currentTarget;
+  if (!window.confirm("¿Revertir a la versión de producción anterior? La decisión quedará auditada.")) return;
+  try {
+    await api(`/api/v1/workspaces/${encodeURIComponent(state.workspace)}/assets/${encodeURIComponent(button.dataset.type)}/${encodeURIComponent(button.dataset.asset)}/rollback`, {
+      method: "POST", body: JSON.stringify({ release_id: button.dataset.rollback, rolled_back_by: "dashboard-operator" }),
+    });
+    showToast("Versión anterior restaurada"); await refresh();
+  } catch (error) { showToast(error.message, true); }
 }
 
 async function decideProposal(event) {

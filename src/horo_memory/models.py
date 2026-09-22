@@ -53,11 +53,12 @@ class RunCreate(StrictModel):
     workspace_id: str
     agent_id: str | None = None
     objective: str = Field(min_length=1, max_length=2000)
+    workflow_id: str | None = Field(default=None, max_length=128)
     workflow_version: str | None = Field(default=None, max_length=200)
     skill_versions: dict[str, str] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("id", "workspace_id", "agent_id")
+    @field_validator("id", "workspace_id", "agent_id", "workflow_id")
     @classmethod
     def safe_ids(cls, value: str | None) -> str | None:
         if value is not None and not SAFE_ID.fullmatch(value):
@@ -147,6 +148,75 @@ class ImprovementDecision(StrictModel):
     decision: Literal["approved", "rejected"]
     decided_by: str = Field(min_length=1, max_length=200)
     note: str | None = Field(default=None, max_length=4000)
+
+
+AssetType = Literal["skill", "workflow", "prompt", "policy"]
+
+
+class AssetVersionCreate(StrictModel):
+    workspace_id: str
+    asset_type: AssetType
+    asset_id: str = Field(min_length=1, max_length=128)
+    version: str = Field(min_length=1, max_length=80)
+    title: str = Field(min_length=1, max_length=300)
+    content: dict[str, Any] = Field(default_factory=dict)
+    source_ref: str | None = Field(default=None, max_length=1000)
+    created_by: str = Field(min_length=1, max_length=200)
+    set_as_initial: bool = False
+
+    @field_validator("workspace_id", "asset_id", "version")
+    @classmethod
+    def safe_ids(cls, value: str) -> str:
+        if not SAFE_ID.fullmatch(value):
+            raise ValueError("Invalid identifier or version")
+        return value
+
+
+class VersionCompareRequest(StrictModel):
+    workspace_id: str
+    asset_type: Literal["skill", "workflow"]
+    asset_id: str = Field(min_length=1, max_length=128)
+    baseline_version: str = Field(min_length=1, max_length=80)
+    candidate_version: str = Field(min_length=1, max_length=80)
+    metric: str = Field(min_length=1, max_length=100)
+    direction: Literal["maximize", "minimize"] = "maximize"
+    minimum_sample_size: int = Field(default=1, ge=1, le=10_000)
+
+    @field_validator(
+        "workspace_id", "asset_id", "baseline_version", "candidate_version", "metric"
+    )
+    @classmethod
+    def safe_ids(cls, value: str) -> str:
+        if not SAFE_ID.fullmatch(value):
+            raise ValueError("Invalid identifier, version, or metric")
+        return value
+
+
+class VersionPromotion(StrictModel):
+    evaluation_id: str
+    proposal_id: str
+    promoted_by: str = Field(min_length=1, max_length=200)
+    note: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("evaluation_id", "proposal_id")
+    @classmethod
+    def safe_ids(cls, value: str) -> str:
+        if not SAFE_ID.fullmatch(value):
+            raise ValueError("Invalid identifier")
+        return value
+
+
+class VersionRollback(StrictModel):
+    release_id: str
+    rolled_back_by: str = Field(min_length=1, max_length=200)
+    note: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("release_id")
+    @classmethod
+    def safe_release_id(cls, value: str) -> str:
+        if not SAFE_ID.fullmatch(value):
+            raise ValueError("Invalid identifier")
+        return value
 
 
 class ContextSearch(StrictModel):

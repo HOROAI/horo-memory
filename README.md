@@ -103,6 +103,40 @@ Available tools:
 - `horo_outcome_record`
 - `horo_run_complete`
 - `horo_improvement_propose`
+- `horo_version_register`
+- `horo_version_compare`
+
+## Evidence-driven version lifecycle
+
+HORO Memory 0.2 closes the learning loop without letting an agent rewrite its own
+history. Skills, workflows, prompts, and policies are registered as immutable versions.
+Runs declare the exact versions they used and events preserve numeric metrics and source
+evidence. The comparison endpoint calculates a per-run metric snapshot and records its
+verdict as another immutable object.
+
+A candidate can be promoted only when both controls exist:
+
+1. the matching improvement proposal was approved by a human; and
+2. a fresh evaluation shows the candidate performed better than the current version.
+
+Every promotion is appended to the release ledger. Rollback appends a new release that
+restores the prior version, so audit history is never overwritten.
+
+Example comparison:
+
+```json
+POST /api/v1/evaluations/compare
+{
+  "workspace_id": "horo-demo-v2",
+  "asset_type": "skill",
+  "asset_id": "linkedin-prospecting",
+  "baseline_version": "1.1.0",
+  "candidate_version": "1.2.0",
+  "metric": "human_edits",
+  "direction": "minimize",
+  "minimum_sample_size": 1
+}
+```
 - `horo_graph_snapshot`
 
 The local MCP process accesses the same data directory directly. The HTTP API uses bearer authentication for browsers and remote adapters.

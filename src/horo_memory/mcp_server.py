@@ -7,6 +7,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from .models import (
+    AssetVersionCreate,
     ContextSearch,
     EntityRef,
     EventCreate,
@@ -14,6 +15,7 @@ from .models import (
     NoteCreate,
     RunComplete,
     RunCreate,
+    VersionCompareRequest,
 )
 from .runtime import build_service
 
@@ -41,6 +43,7 @@ def horo_context_search(query: str, limit: int = 12) -> str:
 def horo_run_start(
     objective: str,
     agent_id: str | None = None,
+    workflow_id: str | None = None,
     workflow_version: str | None = None,
     skill_versions: dict[str, str] | None = None,
 ) -> str:
@@ -50,6 +53,7 @@ def horo_run_start(
             workspace_id=workspace(),
             agent_id=agent_id,
             objective=objective,
+            workflow_id=workflow_id,
             workflow_version=workflow_version,
             skill_versions=skill_versions or {},
         )
@@ -184,6 +188,60 @@ def horo_improvement_propose(
         )
     )
     return json.dumps(proposal, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def horo_version_register(
+    asset_type: str,
+    asset_id: str,
+    version: str,
+    title: str,
+    created_by: str,
+    content: dict[str, Any] | None = None,
+    source_ref: str | None = None,
+    set_as_initial: bool = False,
+) -> str:
+    """Register an immutable skill, workflow, prompt, or policy version."""
+    result = service.register_version(
+        AssetVersionCreate(
+            workspace_id=workspace(),
+            asset_type=asset_type,  # type: ignore[arg-type]
+            asset_id=asset_id,
+            version=version,
+            title=title,
+            content=content or {},
+            source_ref=source_ref,
+            created_by=created_by,
+            set_as_initial=set_as_initial,
+        )
+    )
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def horo_version_compare(
+    asset_type: str,
+    asset_id: str,
+    baseline_version: str,
+    candidate_version: str,
+    metric: str,
+    direction: str = "maximize",
+    minimum_sample_size: int = 1,
+) -> str:
+    """Compare two versions from immutable run metrics and preserve the evaluation evidence."""
+    result = service.compare_versions(
+        VersionCompareRequest(
+            workspace_id=workspace(),
+            asset_type=asset_type,  # type: ignore[arg-type]
+            asset_id=asset_id,
+            baseline_version=baseline_version,
+            candidate_version=candidate_version,
+            metric=metric,
+            direction=direction,  # type: ignore[arg-type]
+            minimum_sample_size=minimum_sample_size,
+        )
+    )
+    return json.dumps(result, ensure_ascii=False, indent=2)
 
 
 def main() -> None:

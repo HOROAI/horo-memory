@@ -174,3 +174,106 @@ def test_ids_cannot_escape_the_vault(
     )
     assert response.status_code == 422
 
+
+def test_version_evaluation_promotion_and_rollback(
+    client: TestClient, auth: dict[str, str], workspace: dict
+) -> None:
+    for version, initial in [("1.0.0", True), ("1.1.0", False)]:
+        response = client.post(
+            "/api/v1/versions",
+            headers=auth,
+            json={
+                "workspace_id": workspace["id"],
+                "asset_type": "skill",
+                "asset_id": "sales-message",
+                "version": version,
+                "title": f"Sales message {version}",
+                "content": {"version": version},
+                "created_by": "operator",
+                "set_as_initial": initial,
+            },
+        )
+        assert response.status_code == 201
+
+    for run_id, version, edits in [
+        ("run-base", "1.0.0", 5),
+        ("run-candidate", "1.1.0", 2),
+    ]:
+        assert client.post(
+            "/api/v1/runs",
+            headers=auth,
+            json={
+                "id": run_id,
+                "workspace_id": workspace["id"],
+                "objective": "Draft a relevant message",
+                "skill_versions": {"sales-message": version},
+            },
+        ).status_code == 201
+        assert client.post(
+            "/api/v1/events",
+            headers=auth,
+            json={
+                "id": f"evt-{run_id}",
+                "workspace_id": workspace["id"],
+                "run_id": run_id,
+                "actor_id": "agent",
+                "event_type": "message_reviewed",
+                "metrics": {"human_edits": edits},
+            },
+        ).status_code == 201
+
+    evaluation = client.post(
+        "/api/v1/evaluations/compare",
+        headers=auth,
+        json={
+            "workspace_id": workspace["id"],
+            "asset_type": "skill",
+            "asset_id": "sales-message",
+            "baseline_version": "1.0.0",
+            "candidate_version": "1.1.0",
+            "metric": "human_edits",
+            "direction": "minimize",
+        },
+    )
+    assert evaluation.status_code == 201
+    assert evaluation.json()["verdict"] == "candidate_better"
+    assert evaluation.json()["improvement_percent"] == 60
+
+    proposal = client.post(
+        "/api/v1/improvements",
+        headers=auth,
+        json={
+            "workspace_id": workspace["id"],
+            "title": "Use the lower-edit message",
+            "description": "It required fewer human edits.",
+            "target_type": "skill",
+            "target_id": "sales-message",
+            "based_on_event_ids": ["evt-run-base", "evt-run-candidate"],
+        },
+    ).json()
+    client.post(
+        f"/api/v1/workspaces/{workspace['id']}/improvements/{proposal['id']}/decision",
+        headers=auth,
+        json={"decision": "approved", "decided_by": "operator"},
+    )
+    promoted = client.post(
+        f"/api/v1/workspaces/{workspace['id']}/assets/skill/sales-message/"
+        "versions/1.1.0/promote",
+        headers=auth,
+        json={
+            "evaluation_id": evaluation.json()["id"],
+            "proposal_id": proposal["id"],
+            "promoted_by": "operator",
+        },
+    )
+    assert promoted.status_code == 201
+    assert promoted.json()["to_version"] == "1.1.0"
+
+    rolled_back = client.post(
+        f"/api/v1/workspaces/{workspace['id']}/assets/skill/sales-message/rollback",
+        headers=auth,
+        json={"release_id": promoted.json()["id"], "rolled_back_by": "operator"},
+    )
+    assert rolled_back.status_code == 201
+    assert rolled_back.json()["action"] == "rollback"
+    assert rolled_back.json()["to_version"] == "1.0.0"

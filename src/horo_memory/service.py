@@ -9,6 +9,7 @@ from .db import Database, encode_json
 from .graphify_adapter import GraphifyAdapter
 from .models import (
     AgentCreate,
+    AssetVersionCreate,
     ContextSearch,
     EventCreate,
     ImprovementCreate,
@@ -16,6 +17,9 @@ from .models import (
     NoteCreate,
     RunComplete,
     RunCreate,
+    VersionCompareRequest,
+    VersionPromotion,
+    VersionRollback,
     WorkspaceCreate,
     new_id,
     utc_now,
@@ -109,15 +113,16 @@ class MemoryService:
                 connection.execute(
                     """
                     INSERT INTO runs(
-                        id, workspace_id, agent_id, objective, workflow_version,
+                        id, workspace_id, agent_id, objective, workflow_id, workflow_version,
                         skill_versions_json, metadata_json, status, started_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)
                     """,
                     (
                         run_id,
                         request.workspace_id,
                         request.agent_id,
                         request.objective,
+                        request.workflow_id,
                         request.workflow_version,
                         encode_json(request.skill_versions),
                         encode_json(request.metadata),
@@ -346,6 +351,389 @@ class MemoryService:
             )
         return self.get_improvement(workspace_id, proposal_id)
 
+    def register_version(self, request: AssetVersionCreate) -> dict[str, Any]:
+        self._require_workspace(request.workspace_id)
+        created_at = utc_now()
+        try:
+            with self.database.transaction() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO asset_versions(
+                        workspace_id, asset_type, asset_id, version, title, content_json,
+                        source_ref, created_by, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        request.workspace_id,
+                        request.asset_type,
+                        request.asset_id,
+                        request.version,
+                        request.title,
+                        encode_json(request.content),
+                        request.source_ref,
+                        request.created_by,
+                        created_at,
+                    ),
+                )
+                if request.set_as_initial:
+                    current = connection.execute(
+                        """
+                        SELECT id FROM version_releases
+                        WHERE workspace_id = ? AND asset_type = ? AND asset_id = ?
+                        LIMIT 1
+                        """,
+                        (request.workspace_id, request.asset_type, request.asset_id),
+                    ).fetchone()
+                    if current:
+                        raise ConflictError("This asset already has a production version")
+                    connection.execute(
+                        """
+                        INSERT INTO version_releases(
+                            id, workspace_id, asset_type, asset_id, from_version, to_version,
+                            action, actor, note, created_at
+                        ) VALUES (?, ?, ?, ?, NULL, ?, 'bootstrap', ?, ?, ?)
+                        """,
+                        (
+                            new_id("rel"),
+                            request.workspace_id,
+                            request.asset_type,
+                            request.asset_id,
+                            request.version,
+                            request.created_by,
+                            "Initial production version",
+                            created_at,
+                        ),
+                    )
+        except sqlite3.IntegrityError as error:
+            raise ConflictError("This immutable asset version already exists") from error
+        return self.get_version(
+            request.workspace_id, request.asset_type, request.asset_id, request.version
+        )
+
+    def get_version(
+        self, workspace_id: str, asset_type: str, asset_id: str, version: str
+    ) -> dict[str, Any]:
+        row = self.database.fetch_one(
+            """
+            SELECT * FROM asset_versions
+            WHERE workspace_id = ? AND asset_type = ? AND asset_id = ? AND version = ?
+            """,
+            (workspace_id, asset_type, asset_id, version),
+        )
+        if not row:
+            raise NotFoundError("Asset version not found")
+        current = self.current_version(workspace_id, asset_type, asset_id)
+        row["is_current"] = bool(current and current["to_version"] == version)
+        return row
+
+    def list_versions(self, workspace_id: str) -> list[dict[str, Any]]:
+        self._require_workspace(workspace_id)
+        rows = self.database.fetch_all(
+            """
+            SELECT * FROM asset_versions WHERE workspace_id = ?
+            ORDER BY asset_type, asset_id, created_at DESC
+            """,
+            (workspace_id,),
+        )
+        current = {
+            (row["asset_type"], row["asset_id"]): row["to_version"]
+            for row in self._current_releases(workspace_id)
+        }
+        for row in rows:
+            row["is_current"] = current.get((row["asset_type"], row["asset_id"])) == row[
+                "version"
+            ]
+        return rows
+
+    def compare_versions(self, request: VersionCompareRequest) -> dict[str, Any]:
+        self._require_workspace(request.workspace_id)
+        if request.baseline_version == request.candidate_version:
+            raise ValueError("Baseline and candidate versions must be different")
+        self.get_version(
+            request.workspace_id,
+            request.asset_type,
+            request.asset_id,
+            request.baseline_version,
+        )
+        self.get_version(
+            request.workspace_id,
+            request.asset_type,
+            request.asset_id,
+            request.candidate_version,
+        )
+        runs = self.list_runs(request.workspace_id, 10_000)
+        baseline_runs = self._runs_for_version(runs, request, request.baseline_version)
+        candidate_runs = self._runs_for_version(runs, request, request.candidate_version)
+        baseline = self._metric_result(request.workspace_id, baseline_runs, request.metric)
+        candidate = self._metric_result(request.workspace_id, candidate_runs, request.metric)
+        enough = (
+            baseline["sample_size"] >= request.minimum_sample_size
+            and candidate["sample_size"] >= request.minimum_sample_size
+        )
+        delta: float | None = None
+        improvement_percent: float | None = None
+        verdict = "inconclusive"
+        if enough:
+            baseline_mean = float(baseline["mean"])
+            candidate_mean = float(candidate["mean"])
+            delta = candidate_mean - baseline_mean
+            directional_gain = delta if request.direction == "maximize" else -delta
+            if directional_gain > 0:
+                verdict = "candidate_better"
+            elif directional_gain < 0:
+                verdict = "baseline_better"
+            if baseline_mean != 0:
+                improvement_percent = directional_gain / abs(baseline_mean) * 100
+        evaluation_id = new_id("eval")
+        evidence = {
+            "baseline_run_ids": baseline.pop("run_ids"),
+            "candidate_run_ids": candidate.pop("run_ids"),
+            "baseline_event_ids": baseline.pop("event_ids"),
+            "candidate_event_ids": candidate.pop("event_ids"),
+        }
+        created_at = utc_now()
+        with self.database.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO version_evaluations(
+                    id, workspace_id, asset_type, asset_id, baseline_version,
+                    candidate_version, metric, direction, minimum_sample_size,
+                    baseline_result_json, candidate_result_json, delta,
+                    improvement_percent, verdict, evidence_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    evaluation_id,
+                    request.workspace_id,
+                    request.asset_type,
+                    request.asset_id,
+                    request.baseline_version,
+                    request.candidate_version,
+                    request.metric,
+                    request.direction,
+                    request.minimum_sample_size,
+                    encode_json(baseline),
+                    encode_json(candidate),
+                    delta,
+                    improvement_percent,
+                    verdict,
+                    encode_json(evidence),
+                    created_at,
+                ),
+            )
+        return self.get_evaluation(request.workspace_id, evaluation_id)
+
+    def get_evaluation(self, workspace_id: str, evaluation_id: str) -> dict[str, Any]:
+        row = self.database.fetch_one(
+            "SELECT * FROM version_evaluations WHERE workspace_id = ? AND id = ?",
+            (workspace_id, evaluation_id),
+        )
+        if not row:
+            raise NotFoundError("Evaluation not found")
+        return row
+
+    def list_evaluations(self, workspace_id: str) -> list[dict[str, Any]]:
+        self._require_workspace(workspace_id)
+        return self.database.fetch_all(
+            """
+            SELECT * FROM version_evaluations
+            WHERE workspace_id = ? ORDER BY created_at DESC
+            """,
+            (workspace_id,),
+        )
+
+    def promote_version(
+        self,
+        workspace_id: str,
+        asset_type: str,
+        asset_id: str,
+        candidate_version: str,
+        request: VersionPromotion,
+    ) -> dict[str, Any]:
+        self.get_version(workspace_id, asset_type, asset_id, candidate_version)
+        evaluation = self.get_evaluation(workspace_id, request.evaluation_id)
+        proposal = self.get_improvement(workspace_id, request.proposal_id)
+        expected = (asset_type, asset_id, candidate_version)
+        evaluated = (
+            evaluation["asset_type"],
+            evaluation["asset_id"],
+            evaluation["candidate_version"],
+        )
+        if evaluated != expected or evaluation["verdict"] != "candidate_better":
+            raise ValueError(
+                "Promotion requires a matching evaluation where the candidate is better"
+            )
+        if proposal["status"] != "approved" or (
+            proposal["target_type"], proposal["target_id"]
+        ) != (asset_type, asset_id):
+            raise ValueError("Promotion requires an approved matching improvement proposal")
+        release_id = new_id("rel")
+        with self.database.transaction() as connection:
+            current_row = connection.execute(
+                """
+                SELECT * FROM version_releases
+                WHERE workspace_id = ? AND asset_type = ? AND asset_id = ?
+                ORDER BY created_at DESC, rowid DESC LIMIT 1
+                """,
+                (workspace_id, asset_type, asset_id),
+            ).fetchone()
+            if not current_row or current_row["to_version"] != evaluation["baseline_version"]:
+                raise ConflictError("Production changed after this evaluation; compare again")
+            connection.execute(
+                """
+                INSERT INTO version_releases(
+                    id, workspace_id, asset_type, asset_id, from_version, to_version,
+                    action, evaluation_id, proposal_id, actor, note, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'promote', ?, ?, ?, ?, ?)
+                """,
+                (
+                    release_id,
+                    workspace_id,
+                    asset_type,
+                    asset_id,
+                    current_row["to_version"],
+                    candidate_version,
+                    request.evaluation_id,
+                    request.proposal_id,
+                    request.promoted_by,
+                    request.note,
+                    utc_now(),
+                ),
+            )
+        return self.get_release(workspace_id, release_id)
+
+    def rollback_version(
+        self,
+        workspace_id: str,
+        asset_type: str,
+        asset_id: str,
+        request: VersionRollback,
+    ) -> dict[str, Any]:
+        prior = self.get_release(workspace_id, request.release_id)
+        if (prior["asset_type"], prior["asset_id"]) != (asset_type, asset_id):
+            raise ValueError("Release does not belong to this asset")
+        if prior["action"] != "promote" or not prior["from_version"]:
+            raise ValueError("Only a promotion with a previous version can be rolled back")
+        release_id = new_id("rel")
+        with self.database.transaction() as connection:
+            current_row = connection.execute(
+                """
+                SELECT * FROM version_releases
+                WHERE workspace_id = ? AND asset_type = ? AND asset_id = ?
+                ORDER BY created_at DESC, rowid DESC LIMIT 1
+                """,
+                (workspace_id, asset_type, asset_id),
+            ).fetchone()
+            if not current_row or current_row["to_version"] != prior["to_version"]:
+                raise ConflictError("This promotion is no longer the current production state")
+            connection.execute(
+                """
+                INSERT INTO version_releases(
+                    id, workspace_id, asset_type, asset_id, from_version, to_version,
+                    action, evaluation_id, proposal_id, actor, note, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'rollback', ?, ?, ?, ?, ?)
+                """,
+                (
+                    release_id,
+                    workspace_id,
+                    asset_type,
+                    asset_id,
+                    current_row["to_version"],
+                    prior["from_version"],
+                    prior["evaluation_id"],
+                    prior["proposal_id"],
+                    request.rolled_back_by,
+                    request.note or f"Rollback of {prior['id']}",
+                    utc_now(),
+                ),
+            )
+        return self.get_release(workspace_id, release_id)
+
+    def current_version(
+        self, workspace_id: str, asset_type: str, asset_id: str
+    ) -> dict[str, Any] | None:
+        return self.database.fetch_one(
+            """
+            SELECT * FROM version_releases
+            WHERE workspace_id = ? AND asset_type = ? AND asset_id = ?
+            ORDER BY created_at DESC, rowid DESC LIMIT 1
+            """,
+            (workspace_id, asset_type, asset_id),
+        )
+
+    def get_release(self, workspace_id: str, release_id: str) -> dict[str, Any]:
+        row = self.database.fetch_one(
+            "SELECT * FROM version_releases WHERE workspace_id = ? AND id = ?",
+            (workspace_id, release_id),
+        )
+        if not row:
+            raise NotFoundError("Release not found")
+        return row
+
+    def list_releases(self, workspace_id: str) -> list[dict[str, Any]]:
+        self._require_workspace(workspace_id)
+        return self.database.fetch_all(
+            """
+            SELECT * FROM version_releases
+            WHERE workspace_id = ? ORDER BY created_at DESC, rowid DESC
+            """,
+            (workspace_id,),
+        )
+
+    def _current_releases(self, workspace_id: str) -> list[dict[str, Any]]:
+        releases = self.list_releases(workspace_id)
+        current: dict[tuple[str, str], dict[str, Any]] = {}
+        for release in releases:
+            current.setdefault((release["asset_type"], release["asset_id"]), release)
+        return list(current.values())
+
+    @staticmethod
+    def _runs_for_version(
+        runs: list[dict[str, Any]], request: VersionCompareRequest, version: str
+    ) -> list[str]:
+        if request.asset_type == "workflow":
+            return [
+                run["id"]
+                for run in runs
+                if run.get("workflow_id") == request.asset_id
+                and run.get("workflow_version") == version
+            ]
+        return [
+            run["id"]
+            for run in runs
+            if run.get("skill_versions", {}).get(request.asset_id) == version
+        ]
+
+    def _metric_result(
+        self, workspace_id: str, run_ids: list[str], metric: str
+    ) -> dict[str, Any]:
+        if not run_ids:
+            return {"sample_size": 0, "mean": None, "total": 0.0, "run_ids": [], "event_ids": []}
+        placeholders = ",".join("?" for _ in run_ids)
+        events = self.database.fetch_all(
+            f"""
+            SELECT id, run_id, metrics_json FROM events
+            WHERE workspace_id = ? AND run_id IN ({placeholders})
+            ORDER BY occurred_at
+            """,
+            (workspace_id, *run_ids),
+        )
+        scores: dict[str, float] = {}
+        evidence_ids: list[str] = []
+        for event in events:
+            value = event["metrics"].get(metric)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                scores[event["run_id"]] = scores.get(event["run_id"], 0.0) + float(value)
+                evidence_ids.append(event["id"])
+        total = sum(scores.values())
+        return {
+            "sample_size": len(scores),
+            "mean": total / len(scores) if scores else None,
+            "total": total,
+            "run_ids": list(scores),
+            "event_ids": evidence_ids,
+        }
+
     def search_context(self, request: ContextSearch) -> list[dict[str, Any]]:
         self._require_workspace(request.workspace_id)
         vault_matches = self.vault.search(request.workspace_id, request.query, request.limit)
@@ -447,6 +835,54 @@ class MemoryService:
             edge(proposal_node, target_node, "proposes_change_to")
             for event_id in proposal["based_on_event_ids"]:
                 edge(f"event:{event_id}", proposal_node, "supports")
+        for version in self.list_versions(workspace_id):
+            version_key = f"{version['asset_type']}:{version['asset_id']}@{version['version']}"
+            version_node = node(
+                version_key,
+                "version",
+                f"{version['asset_id']} · {version['version']}",
+                **version,
+            )
+            asset_node = node(
+                version["asset_id"], version["asset_type"], version["asset_id"]
+            )
+            edge(asset_node, version_node, "has_version")
+            if version["is_current"]:
+                edge(workspace_node, version_node, "production")
+        for evaluation in self.list_evaluations(workspace_id):
+            evaluation_node = node(
+                evaluation["id"],
+                "evaluation",
+                f"{evaluation['metric']} · {evaluation['verdict'].replace('_', ' ')}",
+                **evaluation,
+            )
+            baseline_key = (
+                f"version:{evaluation['asset_type']}:{evaluation['asset_id']}@"
+                f"{evaluation['baseline_version']}"
+            )
+            candidate_key = (
+                f"version:{evaluation['asset_type']}:{evaluation['asset_id']}@"
+                f"{evaluation['candidate_version']}"
+            )
+            edge(baseline_key, evaluation_node, "baseline")
+            edge(candidate_key, evaluation_node, "candidate")
+            for event_id in evaluation["evidence"]["baseline_event_ids"]:
+                edge(f"event:{event_id}", evaluation_node, "measured")
+            for event_id in evaluation["evidence"]["candidate_event_ids"]:
+                edge(f"event:{event_id}", evaluation_node, "measured")
+        for release in self.list_releases(workspace_id):
+            release_node = node(
+                release["id"],
+                "release",
+                f"{release['action']} → {release['to_version']}",
+                **release,
+            )
+            target_key = (
+                f"version:{release['asset_type']}:{release['asset_id']}@{release['to_version']}"
+            )
+            edge(release_node, target_key, release["action"])
+            if release["evaluation_id"]:
+                edge(f"evaluation:{release['evaluation_id']}", release_node, "authorizes")
 
         graphify_loaded = False
         if include_graphify:
@@ -467,6 +903,9 @@ class MemoryService:
             ("runs", "runs"),
             ("events", "events"),
             ("proposals", "improvement_proposals"),
+            ("versions", "asset_versions"),
+            ("evaluations", "version_evaluations"),
+            ("releases", "version_releases"),
         ]:
             row = self.database.fetch_one(
                 f"SELECT COUNT(*) AS count FROM {table} WHERE workspace_id = ?",
@@ -501,6 +940,7 @@ class MemoryService:
                 f"## Objective\n\n{request.objective}\n\n"
                 f"## Configuration\n\n"
                 f"- Agent: `{request.agent_id or 'unassigned'}`\n"
+                f"- Workflow: `{request.workflow_id or 'unspecified'}`\n"
                 f"- Workflow version: `{request.workflow_version or 'unspecified'}`\n"
                 f"- Skill versions: `{json.dumps(request.skill_versions, ensure_ascii=False)}`\n"
                 f"- Started: `{started_at}`\n\n"

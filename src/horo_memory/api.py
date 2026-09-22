@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import Settings, get_settings
 from .models import (
     AgentCreate,
+    AssetVersionCreate,
     ContextSearch,
     EventCreate,
     ImprovementCreate,
@@ -19,6 +20,9 @@ from .models import (
     NoteCreate,
     RunComplete,
     RunCreate,
+    VersionCompareRequest,
+    VersionPromotion,
+    VersionRollback,
     WorkspaceCreate,
 )
 from .runtime import build_service
@@ -31,7 +35,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     service = build_service(settings)
     app = FastAPI(
         title="HORO Memory",
-        version="0.1.0",
+        version="0.2.0",
         description="Self-hosted operational memory and observable learning for AI agents.",
         docs_url="/docs",
         redoc_url=None,
@@ -95,7 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def health() -> dict[str, Any]:
         return {
             "status": "ok",
-            "version": "0.1.0",
+            "version": "0.2.0",
             "graphify": service.graphify.status(),
         }
 
@@ -164,6 +168,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: ImprovementDecision,
     ) -> dict[str, Any]:
         return service.decide_improvement(workspace_id, proposal_id, request)
+
+    @app.get("/api/v1/versions", dependencies=[Depends(authorize)])
+    def list_versions(workspace_id: str) -> list[dict[str, Any]]:
+        return service.list_versions(workspace_id)
+
+    @app.post("/api/v1/versions", dependencies=[Depends(authorize)], status_code=201)
+    def register_version(request: AssetVersionCreate) -> dict[str, Any]:
+        return service.register_version(request)
+
+    @app.get("/api/v1/evaluations", dependencies=[Depends(authorize)])
+    def list_evaluations(workspace_id: str) -> list[dict[str, Any]]:
+        return service.list_evaluations(workspace_id)
+
+    @app.post("/api/v1/evaluations/compare", dependencies=[Depends(authorize)], status_code=201)
+    def compare_versions(request: VersionCompareRequest) -> dict[str, Any]:
+        return service.compare_versions(request)
+
+    @app.get("/api/v1/releases", dependencies=[Depends(authorize)])
+    def list_releases(workspace_id: str) -> list[dict[str, Any]]:
+        return service.list_releases(workspace_id)
+
+    @app.post(
+        "/api/v1/workspaces/{workspace_id}/assets/{asset_type}/{asset_id}/"
+        "versions/{candidate_version}/promote",
+        dependencies=[Depends(authorize)],
+        status_code=201,
+    )
+    def promote_version(
+        workspace_id: str,
+        asset_type: str,
+        asset_id: str,
+        candidate_version: str,
+        request: VersionPromotion,
+    ) -> dict[str, Any]:
+        return service.promote_version(
+            workspace_id, asset_type, asset_id, candidate_version, request
+        )
+
+    @app.post(
+        "/api/v1/workspaces/{workspace_id}/assets/{asset_type}/{asset_id}/rollback",
+        dependencies=[Depends(authorize)],
+        status_code=201,
+    )
+    def rollback_version(
+        workspace_id: str,
+        asset_type: str,
+        asset_id: str,
+        request: VersionRollback,
+    ) -> dict[str, Any]:
+        return service.rollback_version(workspace_id, asset_type, asset_id, request)
 
     @app.get("/api/v1/graph", dependencies=[Depends(authorize)])
     def graph(workspace_id: str, include_graphify: bool = True) -> dict[str, Any]:

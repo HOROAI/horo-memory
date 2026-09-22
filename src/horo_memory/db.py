@@ -115,6 +115,72 @@ CREATE TABLE IF NOT EXISTS improvement_proposals (
 
 CREATE INDEX IF NOT EXISTS idx_proposals_workspace_created
 ON improvement_proposals(workspace_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS asset_versions (
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    asset_type TEXT NOT NULL CHECK (asset_type IN ('skill','workflow','prompt','policy')),
+    asset_id TEXT NOT NULL,
+    version TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content_json TEXT NOT NULL DEFAULT '{}',
+    source_ref TEXT,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, asset_type, asset_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS version_evaluations (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    asset_type TEXT NOT NULL,
+    asset_id TEXT NOT NULL,
+    baseline_version TEXT NOT NULL,
+    candidate_version TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK (direction IN ('maximize','minimize')),
+    minimum_sample_size INTEGER NOT NULL,
+    baseline_result_json TEXT NOT NULL,
+    candidate_result_json TEXT NOT NULL,
+    delta REAL,
+    improvement_percent REAL,
+    verdict TEXT NOT NULL CHECK (verdict IN ('candidate_better','baseline_better','inconclusive')),
+    evidence_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_evaluations_workspace_created
+ON version_evaluations(workspace_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS version_releases (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    asset_type TEXT NOT NULL,
+    asset_id TEXT NOT NULL,
+    from_version TEXT,
+    to_version TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('bootstrap','promote','rollback')),
+    evaluation_id TEXT REFERENCES version_evaluations(id),
+    proposal_id TEXT REFERENCES improvement_proposals(id),
+    actor TEXT NOT NULL,
+    note TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_releases_asset_created
+ON version_releases(workspace_id, asset_type, asset_id, created_at DESC);
+
+CREATE TRIGGER IF NOT EXISTS asset_versions_are_immutable_update BEFORE UPDATE ON asset_versions
+BEGIN SELECT RAISE(ABORT, 'asset versions are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS asset_versions_are_immutable_delete BEFORE DELETE ON asset_versions
+BEGIN SELECT RAISE(ABORT, 'asset versions are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS evaluations_are_immutable_update BEFORE UPDATE ON version_evaluations
+BEGIN SELECT RAISE(ABORT, 'evaluations are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS evaluations_are_immutable_delete BEFORE DELETE ON version_evaluations
+BEGIN SELECT RAISE(ABORT, 'evaluations are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS releases_are_immutable_update BEFORE UPDATE ON version_releases
+BEGIN SELECT RAISE(ABORT, 'releases are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS releases_are_immutable_delete BEFORE DELETE ON version_releases
+BEGIN SELECT RAISE(ABORT, 'releases are immutable'); END;
 """
 
 
@@ -135,6 +201,9 @@ class Database:
     def initialize(self) -> None:
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(runs)")}
+            if "workflow_id" not in columns:
+                connection.execute("ALTER TABLE runs ADD COLUMN workflow_id TEXT")
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -168,6 +237,9 @@ JSON_COLUMNS = {
     "payload_json",
     "based_on_event_ids_json",
     "proposed_patch_json",
+    "content_json",
+    "baseline_result_json",
+    "candidate_result_json",
 }
 
 

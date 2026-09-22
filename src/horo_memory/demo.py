@@ -4,12 +4,14 @@ import sqlite3
 
 from .models import (
     AgentCreate,
+    AssetVersionCreate,
     EntityRef,
     EventCreate,
     ImprovementCreate,
     NoteCreate,
     RunComplete,
     RunCreate,
+    VersionCompareRequest,
     WorkspaceCreate,
 )
 from .service import ConflictError, MemoryService
@@ -20,6 +22,27 @@ def seed_demo(service: MemoryService, workspace_id: str = "horo-demo") -> dict[s
         service.create_workspace(WorkspaceCreate(id=workspace_id, name="HORO Demo Comercial"))
     except ConflictError:
         pass
+
+    for version, title, initial in [
+        ("1.1.0", "Apertura genérica de automatización", True),
+        ("1.2.0", "Apertura basada en fricción verificable", False),
+    ]:
+        try:
+            service.register_version(
+                AssetVersionCreate(
+                    workspace_id=workspace_id,
+                    asset_type="skill",
+                    asset_id="linkedin-prospecting",
+                    version=version,
+                    title=title,
+                    content={"opening_strategy": title},
+                    source_ref="vault://skills/linkedin-prospecting.md",
+                    created_by="demo-operator",
+                    set_as_initial=initial,
+                )
+            )
+        except ConflictError:
+            pass
 
     try:
         service.create_agent(
@@ -42,19 +65,20 @@ def seed_demo(service: MemoryService, workspace_id: str = "horo-demo") -> dict[s
             title="LinkedIn Prospecting",
             body=(
                 "## Purpose\n\nCreate relevant conversations with observable evidence.\n\n"
-                "## Current version\n\n`1.2.0`\n\n"
+                "## Production version\n\n`1.1.0`\n\n"
+                "## Candidate version\n\n`1.2.0`\n\n"
                 "## Rule\n\nLead with a concrete operational problem and one short question."
             ),
-            frontmatter={"version": "1.2.0", "status": "production"},
+            frontmatter={"version": "1.2.0", "status": "candidate"},
         )
     )
 
     runs = [
-        ("demo-run-001", "Validar mensaje centrado en automatización"),
-        ("demo-run-002", "Validar mensaje centrado en seguimiento"),
-        ("demo-run-003", "Comparar respuesta de empresas mineras"),
+        ("demo-run-001", "Validar mensaje centrado en automatización", "1.1.0"),
+        ("demo-run-002", "Validar mensaje centrado en seguimiento", "1.2.0"),
+        ("demo-run-003", "Comparar respuesta de empresas mineras", "1.2.0"),
     ]
-    for run_id, objective in runs:
+    for run_id, objective, skill_version in runs:
         try:
             service.start_run(
                 RunCreate(
@@ -62,8 +86,9 @@ def seed_demo(service: MemoryService, workspace_id: str = "horo-demo") -> dict[s
                     workspace_id=workspace_id,
                     agent_id="hermes-sales",
                     objective=objective,
+                    workflow_id="commercial-learning-loop",
                     workflow_version="commercial-loop-v1",
-                    skill_versions={"linkedin-prospecting": "1.2.0"},
+                    skill_versions={"linkedin-prospecting": skill_version},
                 )
             )
         except ConflictError:
@@ -142,11 +167,24 @@ def seed_demo(service: MemoryService, workspace_id: str = "horo-demo") -> dict[s
             evidence={"event_ids": ["demo-evt-002", "demo-evt-004"]},
             metrics={"sample_size": 2, "confidence": 0.58},
         ),
+        EventCreate(
+            id="demo-evt-006",
+            workspace_id=workspace_id,
+            run_id="demo-run-003",
+            actor_type="agent",
+            actor_id="hermes-sales",
+            event_type="message_drafted",
+            occurred_at="2026-09-20T15:42:00Z",
+            subject=EntityRef(type="prospect", id="cobre-servicios", label="Cobre Servicios"),
+            object=EntityRef(type="campaign", id="mining-cl-v2", label="Minería Chile v2"),
+            evidence={"artifact": "campaigns/mining-cl-v2.md"},
+            metrics={"human_edits": 2, "duration_seconds": 61},
+        ),
     ]
     for event in events:
         service.record_event(event)
 
-    for run_id, _ in runs:
+    for run_id, _, _ in runs:
         try:
             service.complete_run(
                 workspace_id,
@@ -179,4 +217,17 @@ def seed_demo(service: MemoryService, workspace_id: str = "horo-demo") -> dict[s
         )
     except (sqlite3.IntegrityError, ConflictError):
         pass
+    if not service.list_evaluations(workspace_id):
+        service.compare_versions(
+            VersionCompareRequest(
+                workspace_id=workspace_id,
+                asset_type="skill",
+                asset_id="linkedin-prospecting",
+                baseline_version="1.1.0",
+                candidate_version="1.2.0",
+                metric="human_edits",
+                direction="minimize",
+                minimum_sample_size=1,
+            )
+        )
     return {"workspace_id": workspace_id, "status": "ready"}
