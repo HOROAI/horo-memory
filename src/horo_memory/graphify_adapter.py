@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -17,9 +18,24 @@ class GraphifyAdapter:
         self.enabled = enabled
 
     def status(self) -> dict[str, Any]:
+        credential_names = (
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "MOONSHOT_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "DEEPSEEK_API_KEY",
+            "AZURE_OPENAI_API_KEY",
+            "AWS_PROFILE",
+            "AWS_ACCESS_KEY_ID",
+            "OLLAMA_BASE_URL",
+        )
+        headless_ready = any(os.environ.get(name) for name in credential_names) or bool(shutil.which("claude"))
         return {
             "enabled": self.enabled,
             "available": bool(shutil.which(self.command)),
+            "headless_ready": headless_ready,
+            "assistant_managed_supported": True,
             "command": self.command,
         }
 

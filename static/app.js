@@ -140,8 +140,13 @@ async function loadIntegration() {
     $("#graphify-dot").classList.toggle("ok", status.available && status.enabled);
     $("#graphify-status").textContent = !status.enabled
       ? "Integración desactivada"
-      : status.available ? "Disponible para indexar el vault" : "Pendiente de instalación";
-    $("#reindex-button").disabled = !(status.available && status.enabled);
+      : !status.available ? "Pendiente de instalación"
+      : status.headless_ready ? "Indexación automática disponible"
+      : "Hermes estructura el conocimiento con su modelo";
+    $("#reindex-button").disabled = !(status.available && status.enabled && status.headless_ready);
+    $("#reindex-button").title = status.headless_ready
+      ? "Actualizar el índice semántico"
+      : "La indexación semántica se ejecuta desde Hermes; no requiere otra API en este servidor";
   } catch (error) {
     $("#graphify-status").textContent = "No fue posible consultar el estado";
   }
